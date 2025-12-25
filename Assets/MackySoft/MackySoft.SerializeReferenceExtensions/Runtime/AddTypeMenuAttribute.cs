@@ -1,4 +1,6 @@
-﻿using System;
+﻿#if UNITY_2019_3_OR_NEWER
+
+using System;
 	
 /// <summary>
 /// An attribute that overrides the name of the type displayed in the SubclassSelector popup.
@@ -33,3 +35,4 @@ public sealed class AddTypeMenuAttribute : Attribute {
 	}
 
 }
+#endif

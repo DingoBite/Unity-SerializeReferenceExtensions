@@ -1,10 +1,9 @@
-﻿using System;
+﻿#if UNITY_2019_3_OR_NEWER
+using System;
 using System.Linq;
 using System.Collections.Generic;
-using UnityEditor;
 
-namespace MackySoft.SerializeReferenceExtensions.Editor
-{
+namespace MackySoft.SerializeReferenceExtensions.Editor {
 	public static class TypeMenuUtility {
 
 		public const string k_NullDisplayName = "<null>";
@@ -43,3 +42,4 @@ namespace MackySoft.SerializeReferenceExtensions.Editor
 
 	}
 }
+#endif

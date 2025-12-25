@@ -1,16 +1,47 @@
-﻿using System;
+﻿#if UNITY_2019_3_OR_NEWER
+using System;
 using System.Linq;
 using System.Collections.Generic;
+using System.Reflection;
+using NaughtyAttributes.Editor;
+using Unity.Attributes.NaughtyAttributes.Scripts.Core;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 
 namespace MackySoft.SerializeReferenceExtensions.Editor
 {
+	public static class TypeExtensions
+	{
+		public static bool IsAssignableToGenericType(this Type givenType, Type genericType)
+		{
+			if (!genericType.IsGenericType)
+				return givenType.IsAssignableFrom(givenType);
+			
+			var interfaceTypes = givenType.GetInterfaces();
 
+			foreach (var it in interfaceTypes)
+			{
+				if (it.IsGenericType && it.GetGenericTypeDefinition() == genericType)
+					return true;
+			}
+
+			if (givenType.IsGenericType && givenType.GetGenericTypeDefinition() == genericType)
+				return true;
+
+			Type baseType = givenType.BaseType;
+			if (baseType == null) return false;
+
+			return IsAssignableToGenericType(baseType, genericType);
+		}
+	}
+	
 	[CustomPropertyDrawer(typeof(SubclassSelectorAttribute))]
-	public class SubclassSelectorDrawer : PropertyDrawer {
-
+	public class SubclassSelectorDrawer : PropertyDrawer
+	{
+		public static event Action<object, string, Type> PreTypeChangedAtPropertyPath; 
+		public static event Action<object, string, Type> AfterTypeChangedAtPropertyPath; 
+		
 		struct TypePopupCache {
 			public AdvancedTypePopup TypePopup { get; }
 			public AdvancedDropdownState State { get; }
@@ -21,7 +52,7 @@ namespace MackySoft.SerializeReferenceExtensions.Editor
 		}
 
 		const int k_MaxTypePopupLineCount = 13;
-		
+		static readonly Type k_UnityObjectType = typeof(UnityEngine.Object);
 		static readonly GUIContent k_NullDisplayName = new GUIContent(TypeMenuUtility.k_NullDisplayName);
 		static readonly GUIContent k_IsNotManagedReferenceLabel = new GUIContent("The property type is not manage reference.");
 
@@ -30,108 +61,35 @@ namespace MackySoft.SerializeReferenceExtensions.Editor
 
 		SerializedProperty m_TargetProperty;
 
-		public override void OnGUI (Rect position, SerializedProperty property, GUIContent label)
+		public override void OnGUI (Rect position,SerializedProperty property,GUIContent label)
 		{
-			EditorGUI.BeginProperty(position, label, property);
-
-			if (property.propertyType == SerializedPropertyType.ManagedReference)
-			{
-				// Render label first to avoid label overlap for lists
-				Rect foldoutLabelRect = new Rect(position);
-				foldoutLabelRect.height = EditorGUIUtility.singleLineHeight;
-
-				// NOTE: IndentedRect should be disabled as it causes extra indentation.
-				//foldoutLabelRect = EditorGUI.IndentedRect(foldoutLabelRect);
-				Rect popupPosition = EditorGUI.PrefixLabel(foldoutLabelRect, label);
-
-#if UNITY_2021_3_OR_NEWER
-				// Override the label text with the ToString() of the managed reference.
-				var subclassSelectorAttribute = (SubclassSelectorAttribute)attribute;
-				if (subclassSelectorAttribute.UseToStringAsLabel && !property.hasMultipleDifferentValues)
-				{
-					object managedReferenceValue = property.managedReferenceValue;
-					if (managedReferenceValue != null)
-					{
-						label.text = managedReferenceValue.ToString();
-					}
-				}
-#endif
-
+			GUI.contentColor = Color.white;
+			label.text = label.text.Split(' ').Last();
+			EditorGUI.BeginProperty(position,label,property);
+			
+			if (property.propertyType == SerializedPropertyType.ManagedReference) {
 				// Draw the subclass selector popup.
-				if (EditorGUI.DropdownButton(popupPosition, GetTypeName(property), FocusType.Keyboard))
+				var popupPosition = new Rect(position);
+				popupPosition.width -= EditorGUIUtility.labelWidth;
+				popupPosition.x += EditorGUIUtility.labelWidth;
+				popupPosition.height = EditorGUIUtility.singleLineHeight;
+
+				if (EditorGUI.DropdownButton(popupPosition,GetTypeName(property),FocusType.Keyboard))
 				{
-					TypePopupCache popup = GetTypePopup(property);
+					var attribute = PropertyUtility.GetAttribute<SubclassSelectorAttribute>(property);
+					var popup = GetTypePopup(property, attribute);
 					m_TargetProperty = property;
 					popup.TypePopup.Show(popupPosition);
 				}
 
-				// Draw the foldout.
-				if (!string.IsNullOrEmpty(property.managedReferenceFullTypename))
-				{
-					Rect foldoutRect = new Rect(position);
-					foldoutRect.height = EditorGUIUtility.singleLineHeight;
-
-#if UNITY_2022_2_OR_NEWER && !UNITY_6000_0_OR_NEWER
-					// NOTE: Position x must be adjusted.
-					// FIXME: Is there a more essential solution...?
-					// The most promising is UI Toolkit, but it is currently unable to reproduce all of SubclassSelector features. (Complete provision of contextual menu, e.g.)
-					// 2021.3: No adjustment
-					// 2022.1: No adjustment
-					// 2022.2: Adjustment required
-					// 2022.3: Adjustment required
-					// 2023.1: Adjustment required
-					// 2023.2: Adjustment required
-					// 6000.0: No adjustment
-					foldoutRect.x -= 12;
-#endif
-
-					property.isExpanded = EditorGUI.Foldout(foldoutRect, property.isExpanded, GUIContent.none, true);
-				}
-
-				// Draw property if expanded.
-				if (property.isExpanded)
-				{
-					using (new EditorGUI.IndentLevelScope())
-					{
-						// Check if a custom property drawer exists for this type.
-						PropertyDrawer customDrawer = GetCustomPropertyDrawer(property);
-						if (customDrawer != null)
-						{
-							// Draw the property with custom property drawer.
-							Rect indentedRect = position;
-							float foldoutDifference = EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
-							indentedRect.height = customDrawer.GetPropertyHeight(property, label);
-							indentedRect.y += foldoutDifference;
-							customDrawer.OnGUI(indentedRect, property, label);
-						}
-						else
-						{
-							// Draw the properties of the child elements.
-							// NOTE: In the following code, since the foldout layout isn't working properly, I'll iterate through the properties of the child elements myself.
-							// EditorGUI.PropertyField(position, property, GUIContent.none, true);
-
-							Rect childPosition = position;
-							childPosition.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
-							foreach (SerializedProperty childProperty in property.GetChildProperties())
-							{
-								float height = EditorGUI.GetPropertyHeight(childProperty, new GUIContent(childProperty.displayName, childProperty.tooltip), true);
-								childPosition.height = height;
-								EditorGUI.PropertyField(childPosition, childProperty, true);
-
-								childPosition.y += height + EditorGUIUtility.standardVerticalSpacing;
-							}
-						}
-					}
-				}
-			}
-			else
-			{
-				EditorGUI.LabelField(position, label, k_IsNotManagedReferenceLabel);
+				NaughtyEditorGUI.PropertyField(position, property, true);
+			} else {
+                EditorGUI.LabelField(position,label,k_IsNotManagedReferenceLabel);
 			}
 
 			EditorGUI.EndProperty();
 		}
-
+        
 		PropertyDrawer GetCustomPropertyDrawer (SerializedProperty property)
 		{
 			Type propertyType = ManagedReferenceUtility.GetType(property.managedReferenceFullTypename);
@@ -141,17 +99,24 @@ namespace MackySoft.SerializeReferenceExtensions.Editor
 			}
 			return null;
 		}
-
-		TypePopupCache GetTypePopup (SerializedProperty property) {
+		
+		TypePopupCache GetTypePopup(SerializedProperty property, SubclassSelectorAttribute attribute = null) {
 			// Cache this string. This property internally call Assembly.GetName, which result in a large allocation.
 			string managedReferenceFieldTypename = property.managedReferenceFieldTypename;
 
 			if (!m_TypePopups.TryGetValue(managedReferenceFieldTypename,out TypePopupCache result)) {
 				var state = new AdvancedDropdownState();
-
+				
 				Type baseType = ManagedReferenceUtility.GetType(managedReferenceFieldTypename);
 				var popup = new AdvancedTypePopup(
-					TypeSearch.GetTypes(baseType),
+					TypeCache.GetTypesDerivedFrom(baseType).Append(baseType).Where(p =>
+						(p.IsPublic || p.IsNestedPublic) &&
+						!p.IsAbstract &&
+						!p.IsGenericType &&
+						!k_UnityObjectType.IsAssignableFrom(p) &&
+						(attribute?.TypeAssignableRestriction == null || p.IsAssignableToGenericType(attribute.TypeAssignableRestriction)) && 
+						Attribute.IsDefined(p,typeof(SerializableAttribute))
+					),
 					k_MaxTypePopupLineCount,
 					state
 				);
@@ -162,11 +127,14 @@ namespace MackySoft.SerializeReferenceExtensions.Editor
 					foreach (var targetObject in m_TargetProperty.serializedObject.targetObjects) {
 						SerializedObject individualObject = new SerializedObject(targetObject);
 						SerializedProperty individualProperty = individualObject.FindProperty(m_TargetProperty.propertyPath);
+
 						object obj = individualProperty.SetManagedReference(type);
 						individualProperty.isExpanded = (obj != null);
 
+						PreTypeChangedAtPropertyPath?.Invoke(property.serializedObject.targetObject, property.propertyPath, type);
 						individualObject.ApplyModifiedProperties();
 						individualObject.Update();
+						AfterTypeChangedAtPropertyPath?.Invoke(property.serializedObject.targetObject, property.propertyPath, type);
 					}
 				};
 
@@ -188,6 +156,7 @@ namespace MackySoft.SerializeReferenceExtensions.Editor
 			}
 
 			Type type = ManagedReferenceUtility.GetType(managedReferenceFullTypename);
+			
 			string typeName = null;
 
 			AddTypeMenuAttribute typeMenu = TypeMenuUtility.GetAttribute(type);
@@ -221,3 +190,4 @@ namespace MackySoft.SerializeReferenceExtensions.Editor
 
 	}
 }
+#endif
