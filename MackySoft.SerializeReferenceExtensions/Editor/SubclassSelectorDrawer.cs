@@ -2,9 +2,7 @@
 using System;
 using System.Linq;
 using System.Collections.Generic;
-using System.Reflection;
 using NaughtyAttributes.Editor;
-using Unity.Attributes.NaughtyAttributes.Scripts.Core;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
