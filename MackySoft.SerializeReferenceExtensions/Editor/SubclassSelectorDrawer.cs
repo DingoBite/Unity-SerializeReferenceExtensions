@@ -113,7 +113,7 @@ namespace MackySoft.SerializeReferenceExtensions.Editor
 						!p.IsGenericType &&
 						!k_UnityObjectType.IsAssignableFrom(p) &&
 						(attribute?.TypeAssignableRestriction == null || p.IsAssignableToGenericType(attribute.TypeAssignableRestriction)) && 
-						Attribute.IsDefined(p,typeof(SerializableAttribute))
+						Attribute.IsDefined(p,typeof(SerializableAttribute)) && !Attribute.IsDefined(p, typeof(HideInTypeMenuAttribute))
 					),
 					k_MaxTypePopupLineCount,
 					state
